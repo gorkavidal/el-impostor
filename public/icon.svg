@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="102" fill="#dc2626"/>
+  <text x="256" y="170" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-family="system-ui,sans-serif" font-weight="bold" font-size="110">EL</text>
+  <text x="256" y="300" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-family="system-ui,sans-serif" font-weight="900" font-style="italic" font-size="72">IMPOSTOR</text>
+  <text x="256" y="410" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-family="monospace" font-size="60" opacity="0.5">?</text>
+</svg>

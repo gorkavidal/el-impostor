@@ -7,7 +7,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import { Users, UserPlus, X, Play, RotateCcw, Eye, EyeOff, ChevronUp, User, Pencil, Shuffle, Info, HelpCircle } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { WORDS } from './words';
+import { WORDS, type WordEntry } from './words';
 
 type GameState = 'setup' | 'playing' | 'reveal' | 'finished';
 type GameMode = 'classic' | 'uncertainty';
@@ -20,6 +20,7 @@ interface Player {
 export default function App() {
   const [gameState, setGameState] = useState<GameState>('setup');
   const [gameMode, setGameMode] = useState<GameMode>('classic');
+  const [hintsEnabled, setHintsEnabled] = useState(false);
   const [players, setPlayers] = useState<Player[]>([
     { id: '1', name: 'Jugador 1' },
     { id: '2', name: 'Jugador 2' },
@@ -27,7 +28,7 @@ export default function App() {
   ]);
   const [newPlayerName, setNewPlayerName] = useState('');
   const [impostorIndices, setImpostorIndices] = useState<number[]>([]);
-  const [currentWord, setCurrentWord] = useState('');
+  const [currentEntry, setCurrentEntry] = useState<WordEntry | null>(null);
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
   const [isRevealed, setIsRevealed] = useState(false);
   const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
@@ -66,9 +67,9 @@ export default function App() {
       }
     }
 
-    const randomWord = WORDS[Math.floor(Math.random() * WORDS.length)];
+    const randomEntry = WORDS[Math.floor(Math.random() * WORDS.length)];
     setImpostorIndices(indices);
-    setCurrentWord(randomWord);
+    setCurrentEntry(randomEntry);
     setCurrentPlayerIndex(0);
     setGameState('playing');
     setIsRevealed(false);
@@ -268,6 +269,24 @@ export default function App() {
                   </p>
                 </div>
 
+                {/* Hint Toggle */}
+                <div className="bg-white rounded-3xl p-4 shadow-sm border border-black/5">
+                  <button
+                    onClick={() => setHintsEnabled(!hintsEnabled)}
+                    className="w-full flex items-center justify-between"
+                  >
+                    <div className="flex flex-col items-start">
+                      <span className="font-bold text-sm">Pista para el impostor</span>
+                      <span className="text-[10px] opacity-40 mt-0.5">
+                        {hintsEnabled ? 'El impostor recibe una palabra relacionada.' : 'Sin pistas. Dificultad máxima.'}
+                      </span>
+                    </div>
+                    <div className={`w-12 h-7 rounded-full transition-all relative ${hintsEnabled ? 'bg-red-600' : 'bg-black/10'}`}>
+                      <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-all ${hintsEnabled ? 'left-[calc(100%-1.625rem)]' : 'left-0.5'}`} />
+                    </div>
+                  </button>
+                </div>
+
                 <button
                   onClick={startGame}
                   disabled={players.length < 3}
@@ -312,13 +331,23 @@ export default function App() {
                           exit={{ opacity: 0, scale: 0.8 }}
                           className="flex flex-col items-center"
                         >
-                          <span className="text-xs font-mono uppercase tracking-[0.3em] opacity-40 mb-2">Tu palabra secreta</span>
+                          <span className="text-xs font-mono uppercase tracking-[0.3em] opacity-40 mb-2">
+                            {impostorIndices.includes(currentPlayerIndex) ? 'Tu rol secreto' : 'Tu palabra secreta'}
+                          </span>
                           <h3 className="text-4xl font-black tracking-tighter uppercase text-red-600">
-                            {impostorIndices.includes(currentPlayerIndex) ? 'Eres el Impostor' : currentWord}
+                            {impostorIndices.includes(currentPlayerIndex) ? 'Impostor' : currentEntry?.word}
                           </h3>
+                          {impostorIndices.includes(currentPlayerIndex) && hintsEnabled && currentEntry && (
+                            <div className="mt-4 px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl">
+                              <span className="text-[10px] font-mono uppercase tracking-widest text-amber-600">Pista</span>
+                              <p className="text-lg font-bold text-amber-700 mt-1">{currentEntry.hint}</p>
+                            </div>
+                          )}
                           <div className="mt-6 p-4 bg-[#F5F2ED] rounded-2xl text-xs font-medium opacity-60 leading-relaxed">
-                            {impostorIndices.includes(currentPlayerIndex) 
-                              ? "¡No tienes palabra! Intenta descubrir de qué hablan los demás."
+                            {impostorIndices.includes(currentPlayerIndex)
+                              ? (hintsEnabled
+                                ? "Tienes una pista. Úsala para disimular, pero cuidado: no es la palabra exacta."
+                                : "¡No tienes palabra! Intenta descubrir de qué hablan los demás.")
                               : "No dejes que el impostor descubra esta palabra."}
                           </div>
                         </motion.div>
@@ -411,7 +440,7 @@ export default function App() {
                     className="mt-6 pt-6 border-t border-black/5"
                   >
                     <span className="text-xs font-mono uppercase tracking-widest opacity-40">La palabra era</span>
-                    <div className="text-2xl font-bold uppercase mt-1 text-red-600">{currentWord}</div>
+                    <div className="text-2xl font-bold uppercase mt-1 text-red-600">{currentEntry?.word}</div>
                   </motion.div>
                   {gameMode === 'uncertainty' && (
                     <div className="mt-4 text-[10px] font-mono uppercase tracking-widest opacity-30">
@@ -488,6 +517,13 @@ export default function App() {
                     <h3 className="font-bold uppercase tracking-widest text-[10px] text-red-600 mb-2">Modo Incertidumbre</h3>
                     <p className="text-xs leading-relaxed text-red-800">
                       ¡Nadie sabe cuántos impostores hay! Puede haber desde uno solo hasta casi todos. Esto añade paranoia: ¿estás solo o tienes aliados? ¿Es ese jugador raro un impostor o solo alguien confundido?
+                    </p>
+                  </section>
+
+                  <section className="bg-amber-50 p-4 rounded-2xl">
+                    <h3 className="font-bold uppercase tracking-widest text-[10px] text-amber-700 mb-2">Pista para el impostor</h3>
+                    <p className="text-xs leading-relaxed text-amber-800">
+                      Si se activa esta opción, el impostor recibe una palabra relacionada con la palabra secreta (pero no es la misma). Esto le da una ventaja para disimular, pero también hace el juego más interesante.
                     </p>
                   </section>
 

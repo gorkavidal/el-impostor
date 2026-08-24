@@ -1,0 +1,18 @@
+{
+  "name": "El IMPOSTOR",
+  "short_name": "Impostor",
+  "description": "Juego de engaño y deducción",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5F2ED",
+  "theme_color": "#dc2626",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
