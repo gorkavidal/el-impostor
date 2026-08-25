@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
-import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
-import { Users, UserPlus, X, Play, RotateCcw, Eye, EyeOff, ChevronUp, User, Pencil, Shuffle, Info, HelpCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Users, UserPlus, X, Play, RotateCcw, Eye, EyeOff, User, Pencil, Shuffle, HelpCircle, ChevronUp, ChevronDown, Save, FolderOpen, Trash2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { WORDS, type WordEntry } from './words';
 
-type GameState = 'setup' | 'playing' | 'reveal' | 'finished';
+type GameState = 'setup' | 'playing' | 'finished';
 type GameMode = 'classic' | 'uncertainty';
 
 interface Player {
@@ -17,28 +17,87 @@ interface Player {
   name: string;
 }
 
+interface SavedList {
+  name: string;
+  players: Player[];
+}
+
+function cryptoRandom(): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] / (0xFFFFFFFF + 1);
+}
+
+function cryptoRandomInt(max: number): number {
+  return Math.floor(cryptoRandom() * max);
+}
+
+function shuffleArray<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = cryptoRandomInt(i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+const SAVED_LISTS_KEY = 'impostor-saved-lists';
+const LAST_LIST_KEY = 'impostor-last-players';
+
+function loadSavedLists(): SavedList[] {
+  try {
+    const raw = localStorage.getItem(SAVED_LISTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveLists(lists: SavedList[]) {
+  try { localStorage.setItem(SAVED_LISTS_KEY, JSON.stringify(lists)); } catch {}
+}
+
+function loadLastPlayers(): Player[] | null {
+  try {
+    const raw = localStorage.getItem(LAST_LIST_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function persistLastPlayers(players: Player[]) {
+  try { localStorage.setItem(LAST_LIST_KEY, JSON.stringify(players)); } catch {}
+}
+
+const DEFAULT_PLAYERS: Player[] = [
+  { id: '1', name: 'Jugador 1' },
+  { id: '2', name: 'Jugador 2' },
+  { id: '3', name: 'Jugador 3' },
+];
+
 export default function App() {
   const [gameState, setGameState] = useState<GameState>('setup');
   const [gameMode, setGameMode] = useState<GameMode>('classic');
   const [hintsEnabled, setHintsEnabled] = useState(false);
-  const [players, setPlayers] = useState<Player[]>([
-    { id: '1', name: 'Jugador 1' },
-    { id: '2', name: 'Jugador 2' },
-    { id: '3', name: 'Jugador 3' },
-  ]);
+  const [players, setPlayers] = useState<Player[]>(() => loadLastPlayers() ?? DEFAULT_PLAYERS);
   const [newPlayerName, setNewPlayerName] = useState('');
-  const [impostorIndices, setImpostorIndices] = useState<number[]>([]);
+  const [impostorIds, setImpostorIds] = useState<Set<string>>(new Set());
   const [currentEntry, setCurrentEntry] = useState<WordEntry | null>(null);
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
-  const [isRevealed, setIsRevealed] = useState(false);
   const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
   const [round, setRound] = useState(1);
   const [isPressed, setIsPressed] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [showLoadDialog, setShowLoadDialog] = useState(false);
+  const [savedLists, setSavedLists] = useState<SavedList[]>(loadSavedLists);
+  const [saveListName, setSaveListName] = useState('');
+  const recentImpostorIds = useRef<string[]>([]);
+
+  useEffect(() => {
+    if (gameState === 'setup') persistLastPlayers(players);
+  }, [players, gameState]);
 
   const addPlayer = () => {
     if (newPlayerName.trim()) {
-      setPlayers([...players, { id: Math.random().toString(36).substr(2, 9), name: newPlayerName.trim() }]);
+      setPlayers([...players, { id: crypto.randomUUID(), name: newPlayerName.trim() }]);
       setNewPlayerName('');
     }
   };
@@ -53,41 +112,54 @@ export default function App() {
     setPlayers(players.map(p => p.id === id ? { ...p, name } : p));
   };
 
+  const movePlayer = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= players.length) return;
+    const next = [...players];
+    [next[index], next[target]] = [next[target], next[index]];
+    setPlayers(next);
+    if (navigator.vibrate) navigator.vibrate(10);
+  };
+
   const startGame = () => {
-    let indices: number[] = [];
+    const playerIds = players.map(p => p.id);
+    const maxRecent = Math.max(1, players.length - 1);
+    const recentSet = new Set(recentImpostorIds.current.slice(-maxRecent));
+
+    let chosenIds: Set<string>;
+
     if (gameMode === 'classic') {
-      indices = [Math.floor(Math.random() * players.length)];
+      const eligible = playerIds.filter(id => !recentSet.has(id));
+      const pool = eligible.length > 0 ? eligible : playerIds;
+      const pick = pool[cryptoRandomInt(pool.length)];
+      chosenIds = new Set([pick]);
     } else {
-      // Uncertainty mode: 1 to players.length - 1 impostors
-      const numImpostors = Math.floor(Math.random() * (players.length - 1)) + 1;
-      const allIndices = Array.from({ length: players.length }, (_, i) => i);
-      for (let i = 0; i < numImpostors; i++) {
-        const randomIndex = Math.floor(Math.random() * allIndices.length);
-        indices.push(allIndices.splice(randomIndex, 1)[0]);
-      }
+      const numImpostors = cryptoRandomInt(players.length - 1) + 1;
+      const shuffled = shuffleArray<string>(playerIds);
+      chosenIds = new Set<string>(shuffled.slice(0, numImpostors));
     }
 
-    const randomEntry = WORDS[Math.floor(Math.random() * WORDS.length)];
-    setImpostorIndices(indices);
+    recentImpostorIds.current.push(...Array.from(chosenIds));
+    if (recentImpostorIds.current.length > players.length * 3) {
+      recentImpostorIds.current = recentImpostorIds.current.slice(-players.length);
+    }
+
+    const randomEntry = WORDS[cryptoRandomInt(WORDS.length)];
+    setImpostorIds(chosenIds);
     setCurrentEntry(randomEntry);
     setCurrentPlayerIndex(0);
     setGameState('playing');
-    setIsRevealed(false);
     setIsPressed(false);
     if (gameState === 'finished') {
       setRound(prev => prev + 1);
     }
-    
-    // Haptic feedback
-    if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(50);
-    }
+
+    if (navigator.vibrate) navigator.vibrate(50);
   };
 
   const nextPlayer = () => {
     if (currentPlayerIndex < players.length - 1) {
       setCurrentPlayerIndex(currentPlayerIndex + 1);
-      setIsRevealed(false);
       setIsPressed(false);
     } else {
       setGameState('finished');
@@ -101,45 +173,47 @@ export default function App() {
   };
 
   const shufflePlayers = () => {
-    const shuffled = [...players].sort(() => Math.random() - 0.5);
-    setPlayers(shuffled);
+    setPlayers(shuffleArray(players));
     if (navigator.vibrate) navigator.vibrate(20);
   };
 
   const resetGame = () => {
     setGameState('setup');
-    setPlayers([
-      { id: '1', name: 'Jugador 1' },
-      { id: '2', name: 'Jugador 2' },
-      { id: '3', name: 'Jugador 3' },
-    ]);
+    recentImpostorIds.current = [];
+    setRound(1);
   };
 
-  const handleDragEnd = (_: any, info: any) => {
-    // If dragged up significantly or high upward velocity
-    if (info.offset.y < -50 || info.velocity.y < -500) {
-      setIsRevealed(true);
-      if (typeof navigator !== 'undefined' && navigator.vibrate) {
-        navigator.vibrate(10);
-      }
-    } 
-    // If dragged down or high downward velocity
-    else if (info.offset.y > 30 || info.velocity.y > 500) {
-      setIsRevealed(false);
-      if (typeof navigator !== 'undefined' && navigator.vibrate) {
-        navigator.vibrate(5);
-      }
-    }
+  const saveCurrentList = () => {
+    if (!saveListName.trim()) return;
+    const newList: SavedList = { name: saveListName.trim(), players: [...players] };
+    const updated = [...savedLists.filter(l => l.name !== newList.name), newList];
+    setSavedLists(updated);
+    saveLists(updated);
+    setSaveListName('');
+    setShowSaveDialog(false);
   };
+
+  const loadList = (list: SavedList) => {
+    setPlayers(list.players.map(p => ({ ...p, id: crypto.randomUUID() })));
+    setShowLoadDialog(false);
+  };
+
+  const deleteList = (name: string) => {
+    const updated = savedLists.filter(l => l.name !== name);
+    setSavedLists(updated);
+    saveLists(updated);
+  };
+
+  const isImpostor = (playerIndex: number) => impostorIds.has(players[playerIndex].id);
+  const impostorPlayers = players.filter(p => impostorIds.has(p.id));
 
   return (
     <div className="min-h-screen bg-[#F5F2ED] text-[#1A1A1A] font-sans selection:bg-red-200">
       <div className="max-w-md mx-auto px-6 py-8 flex flex-col min-h-screen">
-        
-        {/* Header */}
+
         <header className="mb-8 text-center relative">
           {gameState !== 'setup' && (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               className="absolute left-0 top-1/2 -translate-y-1/2"
@@ -173,15 +247,29 @@ export default function App() {
                       <Users className="w-5 h-5 text-red-600" />
                       <h2 className="font-bold text-lg">Jugadores ({players.length})</h2>
                     </div>
-                    <div className="flex gap-2">
-                      <button 
+                    <div className="flex gap-1">
+                      <button
                         onClick={() => setShowRules(true)}
                         className="p-2 hover:bg-red-50 rounded-xl text-red-600 transition-colors"
                         title="Reglas"
                       >
                         <HelpCircle size={18} />
                       </button>
-                      <button 
+                      <button
+                        onClick={() => setShowLoadDialog(true)}
+                        className="p-2 hover:bg-red-50 rounded-xl text-red-600 transition-colors"
+                        title="Cargar lista"
+                      >
+                        <FolderOpen size={18} />
+                      </button>
+                      <button
+                        onClick={() => { setSaveListName(''); setShowSaveDialog(true); }}
+                        className="p-2 hover:bg-red-50 rounded-xl text-red-600 transition-colors"
+                        title="Guardar lista"
+                      >
+                        <Save size={18} />
+                      </button>
+                      <button
                         onClick={shufflePlayers}
                         className="p-2 hover:bg-red-50 rounded-xl text-red-600 transition-colors"
                         title="Mezclar orden"
@@ -190,39 +278,55 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                  
+
                   <div className="space-y-2 max-h-[30vh] overflow-y-auto pr-2 custom-scrollbar">
-                    {players.map((player) => (
-                      <div key={player.id} className="flex items-center justify-between bg-[#F5F2ED] p-3 rounded-2xl group">
+                    {players.map((player, index) => (
+                      <div key={player.id} className="flex items-center gap-1 bg-[#F5F2ED] p-2 pl-3 rounded-2xl group">
+                        <div className="flex flex-col mr-1">
+                          <button
+                            onClick={() => movePlayer(index, -1)}
+                            disabled={index === 0}
+                            className="p-0.5 text-black/20 hover:text-red-600 disabled:opacity-0 transition-colors"
+                          >
+                            <ChevronUp size={14} />
+                          </button>
+                          <button
+                            onClick={() => movePlayer(index, 1)}
+                            disabled={index === players.length - 1}
+                            className="p-0.5 text-black/20 hover:text-red-600 disabled:opacity-0 transition-colors"
+                          >
+                            <ChevronDown size={14} />
+                          </button>
+                        </div>
                         {editingPlayerId === player.id ? (
                           <input
                             autoFocus
                             value={player.name}
                             onChange={(e) => updatePlayerName(player.id, e.target.value)}
                             onBlur={() => setEditingPlayerId(null)}
-                            onKeyPress={(e) => e.key === 'Enter' && setEditingPlayerId(null)}
-                            className="flex-1 bg-white border-none rounded-xl px-2 py-1 outline-none font-medium text-red-600"
+                            onKeyDown={(e) => e.key === 'Enter' && setEditingPlayerId(null)}
+                            className="flex-1 bg-white border-none rounded-xl px-2 py-1 outline-none font-medium text-red-600 min-w-0"
                           />
                         ) : (
-                          <span 
-                            className="font-medium flex-1 cursor-pointer"
+                          <span
+                            className="font-medium flex-1 cursor-pointer truncate"
                             onClick={() => setEditingPlayerId(player.id)}
                           >
                             {player.name}
                           </span>
                         )}
-                        <div className="flex items-center gap-1">
-                          <button 
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <button
                             onClick={() => setEditingPlayerId(player.id === editingPlayerId ? null : player.id)}
                             className="p-1 hover:bg-red-100 rounded-full text-red-600 transition-colors opacity-0 group-hover:opacity-100"
                           >
-                            <Pencil size={16} />
+                            <Pencil size={14} />
                           </button>
-                          <button 
+                          <button
                             onClick={() => removePlayer(player.id)}
                             className="p-1 hover:bg-red-100 rounded-full text-red-500 transition-colors opacity-0 group-hover:opacity-100"
                           >
-                            <X size={18} />
+                            <X size={16} />
                           </button>
                         </div>
                       </div>
@@ -234,9 +338,9 @@ export default function App() {
                       type="text"
                       value={newPlayerName}
                       onChange={(e) => setNewPlayerName(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && addPlayer()}
+                      onKeyDown={(e) => e.key === 'Enter' && addPlayer()}
                       placeholder="Nombre del jugador..."
-                      className="flex-1 bg-[#F5F2ED] border-none rounded-2xl px-4 py-3 focus:ring-2 focus:ring-red-500 outline-none transition-all"
+                      className="flex-1 bg-[#F5F2ED] border-none rounded-2xl px-4 py-3 focus:ring-2 focus:ring-red-500 outline-none transition-all min-w-0"
                     />
                     <button
                       onClick={addPlayer}
@@ -319,7 +423,6 @@ export default function App() {
                   </h2>
                 </div>
 
-                {/* The Card Container */}
                 <div className="relative w-full aspect-[3/4] max-w-[300px] mb-8">
                   <div className="absolute inset-0 bg-white rounded-[40px] shadow-xl border border-black/5 flex flex-col items-center justify-center p-8 text-center overflow-hidden">
                     <AnimatePresence mode="wait">
@@ -332,19 +435,19 @@ export default function App() {
                           className="flex flex-col items-center"
                         >
                           <span className="text-xs font-mono uppercase tracking-[0.3em] opacity-40 mb-2">
-                            {impostorIndices.includes(currentPlayerIndex) ? 'Tu rol secreto' : 'Tu palabra secreta'}
+                            {isImpostor(currentPlayerIndex) ? 'Tu rol secreto' : 'Tu palabra secreta'}
                           </span>
                           <h3 className="text-4xl font-black tracking-tighter uppercase text-red-600">
-                            {impostorIndices.includes(currentPlayerIndex) ? 'Impostor' : currentEntry?.word}
+                            {isImpostor(currentPlayerIndex) ? 'Impostor' : currentEntry?.word}
                           </h3>
-                          {impostorIndices.includes(currentPlayerIndex) && hintsEnabled && currentEntry && (
+                          {isImpostor(currentPlayerIndex) && hintsEnabled && currentEntry && (
                             <div className="mt-4 px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl">
                               <span className="text-[10px] font-mono uppercase tracking-widest text-amber-600">Pista</span>
                               <p className="text-lg font-bold text-amber-700 mt-1">{currentEntry.hint}</p>
                             </div>
                           )}
                           <div className="mt-6 p-4 bg-[#F5F2ED] rounded-2xl text-xs font-medium opacity-60 leading-relaxed">
-                            {impostorIndices.includes(currentPlayerIndex)
+                            {isImpostor(currentPlayerIndex)
                               ? (hintsEnabled
                                 ? "Tienes una pista. Úsala para disimular, pero cuidado: no es la palabra exacta."
                                 : "¡No tienes palabra! Intenta descubrir de qué hablan los demás.")
@@ -380,7 +483,7 @@ export default function App() {
                     <Eye size={20} />
                     <span>MANTENER</span>
                   </button>
-                  
+
                   <button
                     onClick={nextPlayer}
                     className="flex-1 bg-black text-white py-5 rounded-3xl font-bold text-lg flex flex-col items-center justify-center gap-1 shadow-lg shadow-black/10 active:scale-95 transition-all"
@@ -419,21 +522,21 @@ export default function App() {
                 <div className="bg-white p-8 rounded-[40px] shadow-sm border border-black/5 w-full relative overflow-hidden">
                   <div className="absolute top-0 left-0 w-full h-1 bg-red-600" />
                   <span className="text-xs font-mono uppercase tracking-widest opacity-40">
-                    {impostorIndices.length > 1 ? 'Los impostores eran...' : 'El impostor era...'}
+                    {impostorPlayers.length > 1 ? 'Los impostores eran...' : 'El impostor era...'}
                   </span>
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0, scale: 0.5 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ delay: 0.5, type: 'spring' }}
                     className="mt-4 flex flex-wrap justify-center gap-2"
                   >
-                    {impostorIndices.map(idx => (
-                      <div key={idx} className="text-2xl font-black text-red-600 uppercase tracking-tighter bg-red-50 px-3 py-1 rounded-xl">
-                        {players[idx].name}
+                    {impostorPlayers.map(p => (
+                      <div key={p.id} className="text-2xl font-black text-red-600 uppercase tracking-tighter bg-red-50 px-3 py-1 rounded-xl">
+                        {p.name}
                       </div>
                     ))}
                   </motion.div>
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 1 }}
@@ -444,7 +547,7 @@ export default function App() {
                   </motion.div>
                   {gameMode === 'uncertainty' && (
                     <div className="mt-4 text-[10px] font-mono uppercase tracking-widest opacity-30">
-                      Modo Incertidumbre: Había {impostorIndices.length} {impostorIndices.length === 1 ? 'impostor' : 'impostores'}.
+                      Modo Incertidumbre: Había {impostorPlayers.length} {impostorPlayers.length === 1 ? 'impostor' : 'impostores'}.
                     </div>
                   )}
                 </div>
@@ -466,7 +569,6 @@ export default function App() {
                 </div>
               </motion.div>
             )}
-
           </AnimatePresence>
         </main>
 
@@ -487,7 +589,7 @@ export default function App() {
                 className="bg-white rounded-[40px] w-full max-w-sm p-8 max-h-[80vh] overflow-y-auto custom-scrollbar relative"
                 onClick={(e) => e.stopPropagation()}
               >
-                <button 
+                <button
                   onClick={() => setShowRules(false)}
                   className="absolute top-6 right-6 p-2 hover:bg-red-50 rounded-full text-red-600 transition-colors"
                 >
@@ -495,7 +597,7 @@ export default function App() {
                 </button>
 
                 <h2 className="text-2xl font-black uppercase italic text-red-600 mb-6">Reglas del Juego</h2>
-                
+
                 <div className="space-y-6 text-sm">
                   <section>
                     <h3 className="font-bold uppercase tracking-widest text-xs opacity-40 mb-2">Objetivo</h3>
@@ -540,6 +642,110 @@ export default function App() {
                   className="w-full bg-black text-white py-4 rounded-2xl font-bold mt-8 active:scale-95 transition-all"
                 >
                   ¡ENTENDIDO!
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Save List Dialog */}
+        <AnimatePresence>
+          {showSaveDialog && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6"
+              onClick={() => setShowSaveDialog(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-white rounded-3xl w-full max-w-sm p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 className="font-bold text-lg mb-4">Guardar lista</h3>
+                <p className="text-xs opacity-50 mb-3">
+                  {players.map(p => p.name).join(', ')}
+                </p>
+                <input
+                  autoFocus
+                  type="text"
+                  value={saveListName}
+                  onChange={(e) => setSaveListName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && saveCurrentList()}
+                  placeholder="Nombre de la lista..."
+                  className="w-full bg-[#F5F2ED] border-none rounded-2xl px-4 py-3 focus:ring-2 focus:ring-red-500 outline-none mb-4"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowSaveDialog(false)}
+                    className="flex-1 py-3 rounded-2xl font-bold text-sm bg-black/5 text-black/40"
+                  >
+                    CANCELAR
+                  </button>
+                  <button
+                    onClick={saveCurrentList}
+                    disabled={!saveListName.trim()}
+                    className="flex-1 py-3 rounded-2xl font-bold text-sm bg-red-600 text-white disabled:opacity-50"
+                  >
+                    GUARDAR
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Load List Dialog */}
+        <AnimatePresence>
+          {showLoadDialog && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6"
+              onClick={() => setShowLoadDialog(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-white rounded-3xl w-full max-w-sm p-6 max-h-[70vh] overflow-y-auto custom-scrollbar"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 className="font-bold text-lg mb-4">Cargar lista</h3>
+                {savedLists.length === 0 ? (
+                  <p className="text-sm opacity-40 text-center py-8">No hay listas guardadas.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {savedLists.map((list) => (
+                      <div key={list.name} className="flex items-center gap-2 bg-[#F5F2ED] p-3 rounded-2xl">
+                        <button
+                          onClick={() => loadList(list)}
+                          className="flex-1 text-left min-w-0"
+                        >
+                          <span className="font-bold text-sm block truncate">{list.name}</span>
+                          <span className="text-[10px] opacity-40 block truncate">
+                            {list.players.map(p => p.name).join(', ')}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => deleteList(list.name)}
+                          className="p-2 hover:bg-red-100 rounded-full text-red-500 transition-colors shrink-0"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={() => setShowLoadDialog(false)}
+                  className="w-full py-3 rounded-2xl font-bold text-sm bg-black/5 text-black/40 mt-4"
+                >
+                  CERRAR
                 </button>
               </motion.div>
             </motion.div>
