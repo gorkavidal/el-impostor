@@ -9,7 +9,7 @@ import { Users, UserPlus, X, Play, RotateCcw, Eye, EyeOff, User, Pencil, Shuffle
 import confetti from 'canvas-confetti';
 import { WORDS, type WordEntry } from './words';
 
-type GameState = 'setup' | 'playing' | 'finished';
+type GameState = 'setup' | 'playing' | 'confirm' | 'finished';
 type GameMode = 'classic' | 'uncertainty';
 
 interface Player {
@@ -162,14 +162,19 @@ export default function App() {
       setCurrentPlayerIndex(currentPlayerIndex + 1);
       setIsPressed(false);
     } else {
-      setGameState('finished');
-      confetti({
-        particleCount: 150,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ['#dc2626', '#ef4444', '#000000']
-      });
+      setIsPressed(false);
+      setGameState('confirm');
     }
+  };
+
+  const revealResults = () => {
+    setGameState('finished');
+    confetti({
+      particleCount: 150,
+      spread: 70,
+      origin: { y: 0.6 },
+      colors: ['#dc2626', '#ef4444', '#000000']
+    });
   };
 
   const shufflePlayers = () => {
@@ -281,8 +286,8 @@ export default function App() {
 
                   <div className="space-y-2 max-h-[30vh] overflow-y-auto pr-2 custom-scrollbar">
                     {players.map((player, index) => (
-                      <div key={player.id} className="flex items-center gap-1 bg-[#F5F2ED] p-2 pl-3 rounded-2xl group">
-                        <div className="flex flex-col mr-1">
+                      <div key={player.id} className="flex items-center gap-1 bg-[#F5F2ED] p-2 pl-1 rounded-2xl">
+                        <div className="flex flex-col shrink-0">
                           <button
                             onClick={() => movePlayer(index, -1)}
                             disabled={index === 0}
@@ -309,26 +314,20 @@ export default function App() {
                           />
                         ) : (
                           <span
-                            className="font-medium flex-1 cursor-pointer truncate"
+                            className="font-medium flex-1 cursor-pointer truncate pl-1"
                             onClick={() => setEditingPlayerId(player.id)}
                           >
                             {player.name}
                           </span>
                         )}
-                        <div className="flex items-center gap-0.5 shrink-0">
-                          <button
-                            onClick={() => setEditingPlayerId(player.id === editingPlayerId ? null : player.id)}
-                            className="p-1 hover:bg-red-100 rounded-full text-red-600 transition-colors opacity-0 group-hover:opacity-100"
-                          >
-                            <Pencil size={14} />
-                          </button>
+                        {players.length > 3 && (
                           <button
                             onClick={() => removePlayer(player.id)}
-                            className="p-1 hover:bg-red-100 rounded-full text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                            className="p-1.5 hover:bg-red-100 rounded-full text-red-400 hover:text-red-600 transition-colors shrink-0"
                           >
                             <X size={16} />
                           </button>
-                        </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -496,6 +495,38 @@ export default function App() {
                 <p className="mt-6 text-[10px] font-medium opacity-30 text-center uppercase tracking-widest">
                   Mantén pulsado el botón rojo para ver tu palabra
                 </p>
+              </motion.div>
+            )}
+
+            {gameState === 'confirm' && (
+              <motion.div
+                key="confirm"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.1 }}
+                className="flex-1 flex flex-col items-center justify-center text-center space-y-8"
+              >
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: 'spring', delay: 0.1 }}
+                  className="w-24 h-24 bg-red-100 text-red-600 rounded-full flex items-center justify-center"
+                >
+                  <Users size={48} />
+                </motion.div>
+                <div className="space-y-2">
+                  <h2 className="text-3xl font-bold">Todos han visto su carta</h2>
+                  <p className="opacity-50 text-sm px-4">
+                    Es hora de debatir. Cuando estéis listos, revelad quién es el impostor.
+                  </p>
+                </div>
+                <button
+                  onClick={revealResults}
+                  className="w-full bg-red-600 text-white py-5 rounded-3xl font-bold text-xl flex items-center justify-center gap-3 shadow-lg shadow-red-600/20 active:scale-[0.98] transition-all"
+                >
+                  <Eye size={20} />
+                  RESOLVER RONDA
+                </button>
               </motion.div>
             )}
 
